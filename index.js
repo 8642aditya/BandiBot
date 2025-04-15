@@ -1,4 +1,4 @@
-require('./monitoring.js');  // This will execute monitoring.js when the bot starts
+require('./monitoring.js');  // Execute monitoring.js when the bot starts
 require('dotenv').config();
 const { toggleBassBoost, toggleNightcore, toggleVaporwave, applyFilter } = require('./filters');
 const {
@@ -33,11 +33,11 @@ let player = createAudioPlayer();
 let currentResource;
 let queue = [];
 let isLooping = false;
-let volume = 0.5; // default volume (50%)
-
+let volume = 0.5; // Default volume (50%)
 const UPTIME_API_KEY = process.env.UPTIME_API_KEY;
 const UPTIME_MONITOR_URL = process.env.UPTIME_MONITOR_URL;
 
+// Bot login and presence rotation
 client.once('ready', () => {
     console.log(`${client.user.tag} is now online!`);
 
@@ -56,13 +56,14 @@ client.once('ready', () => {
             status: 'online',
         });
         i = (i + 1) % statuses.length;
-    }, 30000);
+    }, 30000);  // Change status every 30 seconds
 });
 
 // Handle music play and queue commands
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
+    // Play command
     if (message.content.startsWith('!play')) {
         const songQuery = message.content.split(' ').slice(1).join(' ');
         if (!songQuery) return message.reply("Please provide a song name or URL.");
@@ -90,12 +91,13 @@ client.on('messageCreate', async (message) => {
         }
 
         if (player.state.status !== AudioPlayerStatus.Playing) {
-            playSong(message, video);
+            playSong(message, video); // Pass message here
         } else {
             message.reply(`✅ Queued: **${video.title}**`);
         }
     }
 
+    // Queue command
     if (message.content === '!queue') {
         if (queue.length === 0) return message.reply("The queue is empty.");
         const q = queue.map((s, i) => `${i + 1}. ${s.video.title}`).join('\n');
@@ -111,8 +113,11 @@ client.on('messageCreate', async (message) => {
 
 // When music stops, update the status to idle or default
 player.on(AudioPlayerStatus.Idle, () => {
-    if (queue.length > 0) {
-        playSong({ author: queue[0].requestedBy }, queue[0].video);
+    if (queue.length > 0 && !isLooping) {
+        queue.shift(); // Remove the song that just finished
+        playSong(null, queue[0].video); // Re-queue logic
+    } else if (isLooping) {
+        playSong(null, queue[0].video); // Loop the current song
     } else {
         // Update status when the queue is empty
         client.user.setPresence({
@@ -128,13 +133,12 @@ async function playSong(message, video) {
     const stream = ytdl(videoUrl, { filter: 'audioonly', quality: 'highestaudio' });
     const filteredStream = applyFilter(stream);
     const resource = createAudioResource(filteredStream, { inlineVolume: true });
-    currentResource = createAudioResource(filteredStream, { inlineVolume: true });
+    currentResource = resource;
 
     resource.volume.setVolume(volume);
 
     player.play(resource);
     connection.subscribe(player);
-    currentResource = resource;
 
     const embed = new EmbedBuilder()
         .setColor('#1DB954')
@@ -145,7 +149,7 @@ async function playSong(message, video) {
             { name: 'Duration', value: video.duration_raw || 'Unknown', inline: true },
             { name: 'Views', value: video.views || 'N/A', inline: true }
         )
-        .setFooter({ text: `Requested by ${message.author.username}`, iconURL: message.author.displayAvatarURL() });
+        .setFooter({ text: `Requested by ${message ? message.author.username : 'System'}`, iconURL: message ? message.author.displayAvatarURL() : '' });
 
     const controls1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('pause').setLabel('⏸️').setStyle(ButtonStyle.Secondary),
@@ -166,10 +170,10 @@ async function playSong(message, video) {
         new ButtonBuilder().setCustomId('vol-up').setLabel('🔊').setStyle(ButtonStyle.Secondary)
     );
 
-    await message.channel.send({ embeds: [embed], components: [controls1, controls2, volumeControl] });
-
+    await message?.channel.send({ embeds: [embed], components: [controls1, controls2, volumeControl] });
 }
 
+// Handle button interactions
 client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isButton()) return;
 
@@ -200,37 +204,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
             volume = Math.max(volume - 0.1, 0);
             if (currentResource?.volume) currentResource.volume.setVolume(volume);
             return interaction.reply({ content: `🔉 Volume: ${(volume * 100).toFixed(0)}%`, ephemeral: true });
-            case 'bassboost':
-                const bassBoostState = toggleBassBoost();
-                return interaction.reply({
-                    content: `🎵 Bass Boost is now **${bassBoostState ? 'enabled' : 'disabled'}**.`,
-                    ephemeral: true,
-                });
-            case 'nightcore':
-                const nightcoreState = toggleNightcore();
-                return interaction.reply({
-                    content: `🌙 Nightcore is now **${nightcoreState ? 'enabled' : 'disabled'}**.`,
-                    ephemeral: true,
-                });
-            case 'vaporwave':
-                const vaporwaveState = toggleVaporwave();
-                return interaction.reply({
-                    content: `💿 Vaporwave is now **${vaporwaveState ? 'enabled' : 'disabled'}**.`,
-                    ephemeral: true,
-                });
-            }
-            });
+        case 'bassboost':
+            const bassBoostState = toggleBassBoost();
+            return interaction.reply({ content: `🎵 Bass Boost is now **${bassBoostState ? 'enabled' : 'disabled'}**.`, ephemeral: true });
+        case 'nightcore':
+            const nightcoreState = toggleNightcore();
+            return interaction.reply({ content: `🌙 Nightcore is now **${nightcoreState ? 'enabled' : 'disabled'}**.`, ephemeral: true });
+        case 'vaporwave':
+            const vaporwaveState = toggleVaporwave();
+            return interaction.reply({ content: `💿 Vaporwave is now **${vaporwaveState ? 'enabled' : 'disabled'}**.`, ephemeral: true });
+    }
+});
 
+// Uptime monitoring
 setInterval(() => {
     axios.post(`https://api.uptimerobot.com/v2/editMonitor`, {
         api_key: UPTIME_API_KEY,
         monitor_id: UPTIME_MONITOR_URL,
         status: 1,
     }).catch(console.error);
-}, 300000); // every 5 min
+}, 300000); // Every 5 min
 
 client.login(process.env.DISCORD_TOKEN);
 
+// Express web server
 const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -242,3 +239,7 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
     console.log(`Web server running on port ${PORT}`);
 });
+
+
+
+
